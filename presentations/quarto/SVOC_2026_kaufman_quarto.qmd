@@ -1,0 +1,1116 @@
+---
+title: "Does Investor Fear Travel?"
+subtitle: "VIX Spillovers and Equity Return Predictability in Central European Markets"
+author:
+  - name: "Herman Kaufman"
+    affiliations: "Univerzita Komenského v Bratislave, Fakulta managementu"
+date: "2026-05-20"
+date-format: "D MMMM YYYY"
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    html-math-method: katex
+    slide-number: true
+    slide-level: 2
+    code-fold: show
+    code-line-numbers: true
+    code-overflow: wrap
+    highlight-style: github
+    incremental: false
+    transition: fade
+    background-transition: fade
+    width: 1280
+    height: 800
+    footer: "ŠVOČ 2026, Sekcia: Ekonómia a financie"
+    fig-cap-location: bottom
+    fig-align: center
+    embed-resources: true
+    plotly-connected: true
+execute:
+  echo: false
+  warning: false
+  message: false
+  cache: false
+jupyter: python3
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+from pathlib import Path
+
+# Path resolution: assumes the .qmd is in presentations/quarto/
+# and data/ is at the repo root
+REPO_ROOT = Path("../..").resolve()
+DATA = REPO_ROOT / "data"
+
+# Load everything once
+df          = pd.read_parquet(DATA / "regression_data.parquet")
+cee_returns = pd.read_parquet(DATA / "cee_returns.parquet")
+prices      = pd.read_parquet(DATA / "prices_aligned.parquet")
+vix         = pd.read_parquet(DATA / "vix.parquet")
+
+# FMUK color palette
+FMUK_RED = "#9c1844"
+MARKET_COLORS = {
+    "WIG20": "#2563eb",   # blue (Poland)
+    "BUX":   "#7c3aed",   # purple (Hungary)
+    "PX":    "#059669",   # green (Czech)
+    "ATX":   "#d97706",   # orange (Austria)
+}
+
+# Common Plotly layout settings: academic, clean, readable
+COMMON_LAYOUT = dict(
+    template="simple_white",
+    font=dict(family="Source Sans Pro, sans-serif", size=13, color="#1a1a1a"),
+    title_font=dict(size=16, color=FMUK_RED),
+    margin=dict(l=60, r=30, t=60, b=50),
+    plot_bgcolor="#ffffff",
+    paper_bgcolor="rgba(0,0,0,0)",
+    hoverlabel=dict(
+        bgcolor="white",
+        font_size=13,
+        font_family="Source Sans Pro, sans-serif",
+        bordercolor=FMUK_RED,
+    ),
+    legend=dict(
+        bgcolor="rgba(255,255,255,0.85)",
+        bordercolor="#cccccc",
+        borderwidth=1,
+    ),
+)
+```
+
+## Motivation {.smaller}
+
+::: {.columns}
+
+::: {.column width="42%"}
+
+**16 March 2020**
+
+::: {.fragment}
+The CBOE Volatility Index closed at **82.69**, its highest reading since the 2008 financial crisis.
+:::
+
+::: {.fragment}
+Within hours, Central European equity markets crashed in near-synchrony:
+
+- WIG20 fell more than **14%**
+- BUX fell more than **12%**
+- ATX fell nearly **15%**
+:::
+
+::: {.fragment}
+These declines occurred *before* regional fundamentals could plausibly have adjusted.
+:::
+
+::: {.fragment}
+::: {.callout-important icon=false}
+**Global investor fear travels to peripheral markets faster than economic linkages can explain.**
+:::
+:::
+
+:::
+
+::: {.column width="58%"}
+
+```{python}
+#| label: fig-motivation
+#| fig-cap: "VIX level and CEE log returns, 2018-2024. Hover for details, drag to zoom."
+
+# Build a 5-panel subplot: VIX + 4 markets
+fig = make_subplots(
+    rows=5, cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.025,
+    subplot_titles=("VIX level", "WIG20", "BUX", "PX", "ATX"),
+    row_heights=[0.28, 0.18, 0.18, 0.18, 0.18],
+)
+
+# VIX panel (level)
+fig.add_trace(
+    go.Scatter(
+        x=vix.index, y=vix["VIX"],
+        mode="lines", name="VIX",
+        line=dict(color=FMUK_RED, width=1),
+        hovertemplate="<b>%{x|%Y-%m-%d}</b><br>VIX: %{y:.2f}<extra></extra>",
+    ),
+    row=1, col=1,
+)
+
+# Horizontal line at VIX=25
+fig.add_hline(y=25, line_dash="dash", line_color="gray",
+              line_width=1, opacity=0.6, row=1, col=1)
+
+# CEE returns panels
+for i, mkt in enumerate(["WIG20", "BUX", "PX", "ATX"], start=2):
+    fig.add_trace(
+        go.Scatter(
+            x=cee_returns.index, y=cee_returns[mkt] * 100,
+            mode="lines", name=mkt,
+            line=dict(color=MARKET_COLORS[mkt], width=0.6),
+            hovertemplate=f"<b>%{{x|%Y-%m-%d}}</b><br>{mkt}: %{{y:.2f}}%<extra></extra>",
+            showlegend=False,
+        ),
+        row=i, col=1,
+    )
+
+fig.update_layout(**COMMON_LAYOUT)
+fig.update_layout(
+    height=520,
+    showlegend=False,
+    title=None,
+)
+fig.update_yaxes(title_text="Index", row=1, col=1, title_font_size=10)
+for r in range(2, 6):
+    fig.update_yaxes(title_text="%", row=r, col=1, title_font_size=10)
+
+# Annotations: COVID and Russia-Ukraine bands
+for row in range(1, 6):
+    fig.add_vrect(x0="2020-02-15", x1="2020-09-01",
+                  fillcolor="rgba(220,38,38,0.08)", line_width=0, row=row, col=1)
+    fig.add_vrect(x0="2022-01-01", x1="2022-12-31",
+                  fillcolor="rgba(245,158,11,0.08)", line_width=0, row=row, col=1)
+
+fig.show()
+```
+
+:::
+
+:::
+
+---
+
+## Research question {.smaller}
+
+::: {.callout-note icon=false appearance=simple}
+## The question
+
+Does the VIX, as a measure of US implied volatility, predict **next-day returns** in Central European equity markets?
+:::
+
+. . .
+
+**Three testable hypotheses:**
+
+| | Hypothesis | Theoretical basis |
+|---|---|---|
+| **H1** | VIX changes negatively predict next-day CEE returns | Baker, Wurgler & Yuan (2012); Hamao et al. (1990) |
+| **H2** | Predictability stronger for globally integrated markets | Égert & Kočenda (2007) |
+| **H3** | Predictability intensifies during crisis regimes | Forbes & Rigobon (2002); Bekaert et al. (2014) |
+
+. . .
+
+::: {.callout-tip icon=false appearance=simple}
+## Preview of findings
+
+H1 **supported** and substantially strengthened.
+
+H2 **partial**: the most-integrated market shows the weakest next-day predictability (information absorbed intraday).
+
+H3 **rejected**, with the opposite pattern emerging.
+:::
+
+---
+
+## Data and sample {.smaller}
+
+::: {.columns}
+
+::: {.column width="48%"}
+
+::: {.fragment}
+**Four CEE equity indices + VIX, daily 2018–2024**
+:::
+
+::: {.fragment}
+- **WIG20** (Warsaw) from Stooq
+- **BUX** (Budapest) from Stooq
+- **PX** (Prague) from Stooq
+- **ATX** (Vienna) from Wiener Börse directly
+- **VIX** from CBOE via Yahoo Finance
+:::
+
+::: {.fragment}
+```{python}
+#| echo: true
+#| eval: false
+# inner-join alignment on common trading days
+prices = pd.concat([vix, wig20, bux, px, atx],
+                   axis=1, join="inner")
+
+returns = np.log(prices).diff()
+```
+:::
+
+::: {.fragment}
+After alignment: **1,637 trading days** (123 holiday-misaligned dates dropped).
+:::
+
+:::
+
+::: {.column width="52%"}
+
+```{python}
+#| label: fig-corr
+#| fig-cap: "Contemporaneous correlations. VIX–CEE range from -0.343 (PX) to -0.449 (ATX)."
+
+# Build correlation matrix
+corr_data = pd.concat([
+    df[["VIX_change"]].rename(columns={"VIX_change": "ΔVIX"}),
+    cee_returns,
+], axis=1, join="inner").corr()
+
+# Mask upper triangle for cleaner display
+mask = np.triu(np.ones_like(corr_data, dtype=bool), k=1)
+z = corr_data.values.copy()
+z[mask] = np.nan
+
+fig = go.Figure(data=go.Heatmap(
+    z=z,
+    x=corr_data.columns,
+    y=corr_data.index,
+    colorscale="RdBu_r",
+    zmin=-1, zmax=1,
+    text=corr_data.values.round(3),
+    texttemplate="%{text}",
+    textfont=dict(size=13, color="black"),
+    hovertemplate="<b>%{x} ↔ %{y}</b><br>r = %{z:.3f}<extra></extra>",
+    colorbar=dict(title="r", thickness=15, len=0.7),
+))
+
+fig.update_layout(**COMMON_LAYOUT)
+fig.update_layout(
+    height=440,
+    width=520,
+    xaxis=dict(side="bottom"),
+    yaxis=dict(autorange="reversed"),
+)
+fig.show()
+```
+
+:::
+
+:::
+
+---
+
+## Methodology: five specifications {.smaller}
+
+::: {.columns}
+
+::: {.column width="50%"}
+
+**Baseline OLS with Newey-West HAC**
+
+$$r_{i,t+1} = \alpha_i + \beta_{1,i}\,\mathrm{VIX}_t + \beta_{2,i}\,\Delta\mathrm{VIX}_t + \varepsilon_{i,t+1}$$
+
+```{python}
+#| echo: true
+#| eval: false
+import statsmodels.api as sm
+
+X = sm.add_constant(df[["VIX_level", "VIX_change"]])
+y = df[f"{market}_next"]
+
+model = sm.OLS(y, X).fit(
+    cov_type="HAC",
+    cov_kwds={"maxlags": 5}
+)
+```
+
+::: {.fragment}
+Five-lag window (one trading week). Handles heteroskedasticity and autocorrelation jointly.
+:::
+
+:::
+
+::: {.column width="50%"}
+
+**Four extensions:**
+
+::: {.fragment}
+- **Rolling 252-day windows**: coefficient stability over time
+:::
+
+::: {.fragment}
+- **Regime split**: interaction term, VIX > 25 vs calm
+:::
+
+::: {.fragment}
+- **GARCH(1,1) standardization**: returns scaled by conditional volatility
+:::
+
+::: {.fragment}
+- **Subperiod analysis**: pre-COVID vs post-COVID stable regimes
+:::
+
+::: {.fragment}
+::: {.callout-note icon=false appearance=simple}
+*Why OLS, not GARCH primarily?* The research question is about **mean predictability**, not variance dynamics. Welch & Goyal (2008) is the canonical reference for this kind of analysis.
+:::
+:::
+
+:::
+
+:::
+
+---
+
+## Baseline result {.smaller}
+
+::: {.columns}
+
+::: {.column width="42%"}
+
+::: {.fragment}
+**Three findings:**
+:::
+
+::: {.fragment}
+1. VIX **change** coefficient negative in all 4 markets
+:::
+
+::: {.fragment}
+2. VIX **level** coefficient indistinguishable from zero; the relationship is driven by daily innovations, not the ambient level
+:::
+
+::: {.fragment}
+3. Significance: PX at 5%, BUX and ATX at 10%, WIG20 marginal
+:::
+
+::: {.fragment}
+::: {.callout-note icon=false appearance=simple}
+**Economic magnitude:** a 1-point VIX rise predicts a 0.08% next-day return decline.
+
+Modest on a typical day, **0.8–1.2%** during crises (10–15 point VIX moves).
+:::
+:::
+
+:::
+
+::: {.column width="58%"}
+
+```{python}
+#| label: fig-baseline
+#| fig-cap: "Coefficient estimates with Newey-West 95% confidence intervals. Hover for exact values."
+
+import statsmodels.api as sm
+
+# Fit the baseline regression for each market and collect estimates
+markets = ["WIG20", "BUX", "PX", "ATX"]
+results_data = []
+
+for mkt in markets:
+    y = df[f"{mkt}_next"]
+    X = sm.add_constant(df[["VIX_level", "VIX_change"]])
+    res = sm.OLS(y, X).fit(cov_type="HAC", cov_kwds={"maxlags": 5})
+    
+    beta = res.params["VIX_change"]
+    se = res.bse["VIX_change"]
+    pval = res.pvalues["VIX_change"]
+    ci = res.conf_int().loc["VIX_change"]
+    
+    results_data.append({
+        "market": mkt,
+        "beta": beta,
+        "ci_lower": ci[0],
+        "ci_upper": ci[1],
+        "se": se,
+        "pval": pval,
+    })
+
+results = pd.DataFrame(results_data)
+
+# Horizontal error bar plot
+fig = go.Figure()
+
+for _, row in results.iterrows():
+    fig.add_trace(go.Scatter(
+        x=[row["beta"]],
+        y=[row["market"]],
+        mode="markers",
+        marker=dict(size=14, color=MARKET_COLORS[row["market"]],
+                    line=dict(color="white", width=2)),
+        error_x=dict(
+            type="data",
+            symmetric=False,
+            array=[row["ci_upper"] - row["beta"]],
+            arrayminus=[row["beta"] - row["ci_lower"]],
+            color=MARKET_COLORS[row["market"]],
+            thickness=2.5,
+        ),
+        name=row["market"],
+        hovertemplate=(
+            f"<b>{row['market']}</b><br>"
+            f"β = {row['beta']:.5f}<br>"
+            f"SE = {row['se']:.5f}<br>"
+            f"p = {row['pval']:.3f}<br>"
+            f"95% CI: [{row['ci_lower']:.5f}, {row['ci_upper']:.5f}]"
+            "<extra></extra>"
+        ),
+        showlegend=False,
+    ))
+
+# Reference line at zero
+fig.add_vline(x=0, line_dash="solid", line_color="black", line_width=1)
+
+fig.update_layout(**COMMON_LAYOUT)
+fig.update_layout(
+    height=420,
+    xaxis_title="VIX_change coefficient (95% CI)",
+    yaxis=dict(autorange="reversed"),
+    title="A one-point VIX shock -> next-day CEE return",
+)
+fig.show()
+```
+
+:::
+
+:::
+
+---
+
+## Rolling window: persistence story {.smaller}
+
+::: {.columns}
+
+::: {.column width="32%"}
+
+::: {.fragment}
+**1,384 rolling 252-day regressions per market**
+:::
+
+::: {.fragment}
+**Coefficient negative in:**
+
+- 97.3% of WIG20 windows
+- 99.3% of ATX windows
+- Between those endpoints for BUX and PX
+:::
+
+::: {.fragment}
+::: {.callout-important icon=false appearance=simple}
+Crisis episodes deepen the magnitude; the sign almost never flips.
+:::
+:::
+
+:::
+
+::: {.column width="68%"}
+
+```{python}
+#| label: fig-rolling
+#| fig-cap: "Rolling 252-day VIX_change coefficient. Click legend to toggle markets. Drag to zoom into specific time periods."
+
+import statsmodels.api as sm
+
+# Compute rolling coefficients for each market
+WINDOW = 252
+rolling_data = {}
+
+for mkt in markets:
+    coefs = []
+    dates = []
+    
+    for end_idx in range(WINDOW, len(df)):
+        window = df.iloc[end_idx - WINDOW:end_idx]
+        y = window[f"{mkt}_next"]
+        X = sm.add_constant(window[["VIX_level", "VIX_change"]])
+        
+        try:
+            res = sm.OLS(y, X).fit(cov_type="HAC", cov_kwds={"maxlags": 5})
+            coefs.append(res.params["VIX_change"])
+            dates.append(df.index[end_idx])
+        except Exception:
+            continue
+    
+    rolling_data[mkt] = pd.Series(coefs, index=dates)
+
+# Plot
+fig = go.Figure()
+
+for mkt in markets:
+    s = rolling_data[mkt]
+    fig.add_trace(go.Scatter(
+        x=s.index,
+        y=s.values,
+        mode="lines",
+        name=mkt,
+        line=dict(color=MARKET_COLORS[mkt], width=1.5),
+        hovertemplate=(
+            f"<b>{mkt}</b><br>"
+            "Date: %{x|%Y-%m-%d}<br>"
+            "β = %{y:.5f}"
+            "<extra></extra>"
+        ),
+    ))
+
+# Zero reference and crisis bands
+fig.add_hline(y=0, line_color="black", line_width=0.8)
+
+fig.add_vrect(
+    x0="2020-02-15", x1="2020-09-01",
+    fillcolor="rgba(220,38,38,0.10)", line_width=0,
+    annotation_text="COVID-19", annotation_position="top left",
+    annotation=dict(font_size=11, font_color="#dc2626"),
+)
+fig.add_vrect(
+    x0="2022-01-01", x1="2022-12-31",
+    fillcolor="rgba(245,158,11,0.10)", line_width=0,
+    annotation_text="Russia-Ukraine", annotation_position="top left",
+    annotation=dict(font_size=11, font_color="#d97706"),
+)
+
+fig.update_layout(**COMMON_LAYOUT)
+fig.update_layout(
+    height=480,
+    xaxis_title="Window end date",
+    yaxis_title="VIX_change coefficient",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom", y=1.02,
+        xanchor="right", x=1,
+        bgcolor="rgba(255,255,255,0.85)",
+    ),
+    hovermode="x unified",
+)
+fig.show()
+```
+
+:::
+
+:::
+
+---
+
+## Regime analysis: predictability weakens in crises {.smaller}
+
+::: {.columns}
+
+::: {.column width="40%"}
+
+**Interaction regression:**
+
+$$r_{i,t+1} = \alpha + \beta_2\,\Delta\mathrm{VIX}_t + \delta\,(\Delta\mathrm{VIX}_t \times D_t^{\mathrm{crisis}}) + \cdots$$
+
+::: {.fragment}
+::: {.callout-warning icon=false appearance=simple}
+**Calm-regime effect is 2–3× stronger than crisis-regime effect.**
+
+H3 (contagion-amplification) is rejected.
+:::
+:::
+
+::: {.fragment}
+**Three explanations:**
+
+1. **Signal-to-noise.** Crisis periods drown the VIX signal in concurrent news.
+2. **Faster intraday adjustment.** Crisis markets price information within the same trading day.
+3. **VIX mean reversion.** Extreme VIX shocks reverse, weakening the linear predictive coefficient.
+:::
+
+:::
+
+::: {.column width="60%"}
+
+```{python}
+#| label: fig-regime
+#| fig-cap: "Calm vs crisis regime coefficients with 95% CIs. Hover for exact values."
+
+# Estimate the interaction regression for each market
+regime_data = []
+
+for mkt in markets:
+    y = df[f"{mkt}_next"]
+    D = (df["VIX_level"] > 25).astype(int)
+    
+    X = pd.DataFrame({
+        "VIX_level": df["VIX_level"],
+        "VIX_change": df["VIX_change"],
+        "D_crisis": D,
+        "VIXch_x_D": df["VIX_change"] * D,
+    })
+    X = sm.add_constant(X)
+    res = sm.OLS(y, X).fit(cov_type="HAC", cov_kwds={"maxlags": 5})
+    
+    beta_calm = res.params["VIX_change"]
+    delta = res.params["VIXch_x_D"]
+    beta_crisis = beta_calm + delta
+    
+    se_calm = res.bse["VIX_change"]
+    # combined SE for β + δ requires the full covariance
+    cov = res.cov_params()
+    var_sum = (cov.loc["VIX_change", "VIX_change"]
+               + cov.loc["VIXch_x_D", "VIXch_x_D"]
+               + 2 * cov.loc["VIX_change", "VIXch_x_D"])
+    se_crisis = np.sqrt(var_sum)
+    
+    regime_data.append({
+        "market": mkt,
+        "calm": beta_calm, "calm_se": se_calm,
+        "crisis": beta_crisis, "crisis_se": se_crisis,
+    })
+
+regime_df = pd.DataFrame(regime_data)
+
+# Grouped bar chart with error bars
+fig = go.Figure()
+
+# Calm bars
+fig.add_trace(go.Bar(
+    x=regime_df["market"],
+    y=regime_df["calm"],
+    name="Calm regime (VIX ≤ 25)",
+    marker_color="#2563eb",
+    error_y=dict(
+        type="data",
+        array=1.96 * regime_df["calm_se"],
+        color="#1e3a8a",
+        thickness=1.5,
+    ),
+    hovertemplate=(
+        "<b>%{x}, Calm</b><br>"
+        "β = %{y:.5f}<br>"
+        "95% CI half-width: %{error_y.array:.5f}"
+        "<extra></extra>"
+    ),
+))
+
+# Crisis bars
+fig.add_trace(go.Bar(
+    x=regime_df["market"],
+    y=regime_df["crisis"],
+    name="Crisis regime (VIX > 25)",
+    marker_color="#dc2626",
+    error_y=dict(
+        type="data",
+        array=1.96 * regime_df["crisis_se"],
+        color="#7f1d1d",
+        thickness=1.5,
+    ),
+    hovertemplate=(
+        "<b>%{x}, Crisis</b><br>"
+        "β + δ = %{y:.5f}<br>"
+        "95% CI half-width: %{error_y.array:.5f}"
+        "<extra></extra>"
+    ),
+))
+
+fig.add_hline(y=0, line_color="black", line_width=0.8)
+
+fig.update_layout(**COMMON_LAYOUT)
+fig.update_layout(
+    height=460,
+    yaxis_title="VIX_change coefficient",
+    barmode="group",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom", y=1.02,
+        xanchor="right", x=1,
+        bgcolor="rgba(255,255,255,0.85)",
+    ),
+    title="Predictability is stronger in calm regimes",
+)
+fig.show()
+```
+
+:::
+
+:::
+
+---
+
+## GARCH(1,1) robustness {.smaller}
+
+::: {.columns}
+
+::: {.column width="42%"}
+
+```{python}
+#| echo: true
+#| eval: false
+from arch import arch_model
+
+am = arch_model(returns_pct,
+                mean="Constant",
+                vol="GARCH",
+                p=1, q=1)
+
+res = am.fit(disp="off")
+sigma_t = res.conditional_volatility / 100
+
+# standardize
+r_std = raw_returns / sigma_t
+```
+
+::: {.fragment}
+**Persistence α + β across markets:**
+
+- Between 0.95 and 0.96 in all four markets
+- Well within the stationarity region
+- Standard for daily equity returns
+:::
+
+::: {.fragment}
+::: {.callout-tip icon=false appearance=simple}
+After standardization: **1% significance in all 4 markets**.
+
+The baseline was *attenuated*, not driven, by heteroskedasticity.
+:::
+:::
+
+:::
+
+::: {.column width="58%"}
+
+```{python}
+#| label: fig-garch
+#| fig-cap: "GARCH(1,1) conditional volatility. Hover for date and volatility level."
+
+from arch import arch_model
+
+# Fit GARCH(1,1) for each market and extract conditional volatility
+cond_vol = {}
+for mkt in markets:
+    returns_pct = cee_returns[mkt].dropna() * 100
+    am = arch_model(returns_pct, mean="Constant", vol="GARCH", p=1, q=1)
+    res = am.fit(disp="off")
+    cond_vol[mkt] = res.conditional_volatility
+
+# 2x2 subplot
+fig = make_subplots(
+    rows=2, cols=2,
+    subplot_titles=tuple(markets),
+    vertical_spacing=0.13,
+    horizontal_spacing=0.08,
+)
+
+positions = [(1,1), (1,2), (2,1), (2,2)]
+
+for mkt, (r, c) in zip(markets, positions):
+    cv = cond_vol[mkt]
+    fig.add_trace(
+        go.Scatter(
+            x=cv.index, y=cv.values,
+            mode="lines",
+            line=dict(color=MARKET_COLORS[mkt], width=1),
+            name=mkt,
+            showlegend=False,
+            hovertemplate=(
+                f"<b>{mkt}</b><br>"
+                "%{x|%Y-%m-%d}<br>"
+                "σ_t = %{y:.2f}%"
+                "<extra></extra>"
+            ),
+        ),
+        row=r, col=c,
+    )
+    fig.add_hline(
+        y=cv.mean(),
+        line_dash="dash", line_color="gray", line_width=1,
+        row=r, col=c,
+    )
+
+fig.update_layout(**COMMON_LAYOUT)
+fig.update_layout(
+    height=470,
+    showlegend=False,
+)
+for r, c in positions:
+    fig.update_yaxes(title_text="σ (%)", row=r, col=c, title_font_size=10)
+
+fig.show()
+```
+
+:::
+
+:::
+
+---
+
+## Subperiod analysis: the headline result {.smaller}
+
+::: {.columns}
+
+::: {.column width="38%"}
+
+::: {.fragment}
+**Pre-COVID** (2018-01 → 2020-02, n=488)
+:::
+
+::: {.fragment}
+**Post-COVID** (2022-01 → 2024-12, n=702)
+:::
+
+::: {.fragment}
+Chaotic 2020–2021 transition deliberately omitted.
+:::
+
+::: {.fragment}
+::: {.callout-important icon=false appearance=simple}
+**PX pre-COVID R² = 9.4%**
+
+Exceptionally high for daily-frequency return predictability.
+
+All 12 subperiod regressions significant at 1%.
+:::
+:::
+
+::: {.fragment}
+The full-sample baseline regression *systematically understates* the relationship.
+:::
+
+:::
+
+::: {.column width="62%"}
+
+```{python}
+#| label: fig-subperiod
+#| fig-cap: "Pre-COVID, post-COVID, and full-sample coefficients. Hover for exact values."
+
+# Define subperiods
+PRE_END = "2020-02-15"
+POST_START = "2022-01-01"
+
+pre  = df.loc[:PRE_END]
+post = df.loc[POST_START:]
+full = df
+
+def fit_one(data, mkt):
+    y = data[f"{mkt}_next"]
+    X = sm.add_constant(data[["VIX_level", "VIX_change"]])
+    return sm.OLS(y, X).fit(cov_type="HAC", cov_kwds={"maxlags": 5})
+
+sub_data = []
+for mkt in markets:
+    pre_res = fit_one(pre, mkt)
+    post_res = fit_one(post, mkt)
+    full_res = fit_one(full, mkt)
+    
+    for period_name, res in [("Pre-COVID", pre_res),
+                              ("Post-COVID", post_res),
+                              ("Full sample", full_res)]:
+        sub_data.append({
+            "market": mkt,
+            "period": period_name,
+            "beta": res.params["VIX_change"],
+            "ci_half": 1.96 * res.bse["VIX_change"],
+            "r2": res.rsquared,
+        })
+
+sub_df = pd.DataFrame(sub_data)
+
+# Grouped bar chart
+fig = go.Figure()
+
+period_colors = {
+    "Pre-COVID": "#1e40af",
+    "Post-COVID": "#059669",
+    "Full sample": "#6b7280",
+}
+
+for period in ["Pre-COVID", "Post-COVID", "Full sample"]:
+    sub = sub_df[sub_df["period"] == period]
+    fig.add_trace(go.Bar(
+        x=sub["market"],
+        y=sub["beta"],
+        name=period,
+        marker_color=period_colors[period],
+        error_y=dict(
+            type="data",
+            array=sub["ci_half"],
+            color="#404040",
+            thickness=1.2,
+        ),
+        customdata=sub["r2"],
+        hovertemplate=(
+            f"<b>%{{x}}, {period}</b><br>"
+            "β = %{y:.5f}<br>"
+            "R² = %{customdata:.2%}"
+            "<extra></extra>"
+        ),
+    ))
+
+fig.add_hline(y=0, line_color="black", line_width=0.8)
+
+fig.update_layout(**COMMON_LAYOUT)
+fig.update_layout(
+    height=470,
+    yaxis_title="VIX_change coefficient (95% CI)",
+    barmode="group",
+    legend=dict(
+        orientation="h",
+        yanchor="bottom", y=1.02,
+        xanchor="right", x=1,
+        bgcolor="rgba(255,255,255,0.85)",
+    ),
+    title="Pre-COVID predictability is consistently strongest",
+)
+fig.show()
+```
+
+:::
+
+:::
+
+---
+
+## Main findings
+
+::: {.incremental}
+
+1. **VIX changes negatively predict next-day CEE returns** in every market
+
+2. **Effect holds at 1% significance across all five specifications**: baseline, rolling, regime, GARCH-standardized, subperiod
+
+3. **Strongest in calm regimes**, weaker in crises, the opposite of contagion-amplification
+
+4. **Strongest in the pre-COVID period**, with PX R² reaching 9.4%
+
+5. **97–99% of rolling windows** show negative coefficient
+
+:::
+
+. . .
+
+::: {.callout-note icon=false}
+The full-sample regression most papers would report systematically understates a relationship that is much stronger when properly conditioned.
+:::
+
+---
+
+## Two practical takeaways, four open questions {.smaller}
+
+::: {.columns}
+
+::: {.column width="50%"}
+
+::: {.fragment}
+**For investors**
+
+Long VIX positions offer a **partial hedge** against CEE equity exposure, particularly in **calm markets**, when hedging is cheapest but the link is strongest.
+:::
+
+::: {.fragment}
+**For financial stability authorities**
+
+Contemporaneous co-movement does *not* extrapolate to predictive transmission during crises. Don't conflate the two.
+:::
+
+:::
+
+::: {.column width="50%"}
+
+**Future research**
+
+::: {.incremental}
+
+- **Higher-frequency data** to disentangle intraday and overnight transmission channels
+
+- **Quantile regression** to examine asymmetry across the return distribution
+
+- **Local volatility indices** (V2X for the eurozone) to isolate US-specific sentiment
+
+- **Markov-switching framework** for endogenous regime detection
+
+:::
+
+:::
+
+:::
+
+---
+
+## Reproducibility {.smaller}
+
+::: {.columns}
+
+::: {.column width="60%"}
+
+**Open-source replication archive:**
+
+`github.com/kaufmanhdev/vix-cee-predictability`
+
+Released under MIT License.
+
+**Seven Jupyter notebooks:**
+
+```
+notebooks/
+├── 01_data_collection.ipynb
+├── 02_diagnostics.ipynb
+├── 03_ols_regression.ipynb
+├── 04_rolling_window.ipynb
+├── 05_regime_analysis.ipynb
+├── 06_garch_robustness.ipynb
+└── 07_subperiod_analysis.ipynb
+```
+
+`requirements.txt` pins Python 3.11+, statsmodels, arch, pandas, numpy, plotly.
+
+:::
+
+::: {.column width="40%"}
+
+**This presentation is itself a Quarto document:**
+
+Every figure in this deck is generated at render time from the `.parquet` files. The regressions you see *are* the regressions in the paper, computed from the same data, embedded as interactive Plotly charts.
+
+```yaml
+format:
+  revealjs:
+    theme: [default, custom.scss]
+    embed-resources: true
+```
+
+Compiles to a single self-contained HTML file.
+
+:::
+
+:::
+
+---
+
+## Otázky / Questions {.closing-slide background-color="#9c1844"}
+
+::: {style="text-align: center; margin-top: 2em;"}
+
+**Herman Kaufman**
+
+*Konzultant: Kováč Urban*
+
+ŠVOČ 2026, Sekcia: Ekonómia a financie
+
+Univerzita Komenského v Bratislave, Fakulta managementu
+
+:::
+
+---
+
+## References {.smaller}
+
+Baker, M., Wurgler, J., & Yuan, Y. (2012). Global, Local, and Contagious Investor Sentiment. *Journal of Financial Economics*, 104(2), 272–287.
+
+Bekaert, G., Ehrmann, M., Fratzscher, M., & Mehl, A. (2014). The Global Crisis and Equity Market Contagion. *Journal of Finance*, 69(6), 2597–2649.
+
+Bollerslev, T. (1986). Generalized Autoregressive Conditional Heteroskedasticity. *Journal of Econometrics*, 31(3), 307–327.
+
+Diebold, F. X., & Yilmaz, K. (2012). Better to Give than to Receive: Predictive Directional Measurement of Volatility Spillovers. *International Journal of Forecasting*, 28(1), 57–66.
+
+Forbes, K. J., & Rigobon, R. (2002). No Contagion, Only Interdependence: Measuring Stock Market Comovements. *Journal of Finance*, 57(5), 2223–2261.
+
+Hamao, Y., Masulis, R. W., & Ng, V. (1990). Correlations in Price Changes and Volatility across International Stock Markets. *Review of Financial Studies*, 3(2), 281–307.
+
+Newey, W. K., & West, K. D. (1987). A Simple, Positive Semi-Definite, Heteroskedasticity and Autocorrelation Consistent Covariance Matrix. *Econometrica*, 55(3), 703–708.
+
+Welch, I., & Goyal, A. (2008). A Comprehensive Look at the Empirical Performance of Equity Premium Prediction. *Review of Financial Studies*, 21(4), 1455–1508.
+
+Whaley, R. E. (2000). The Investor Fear Gauge. *Journal of Portfolio Management*, 26(3), 12–17.
